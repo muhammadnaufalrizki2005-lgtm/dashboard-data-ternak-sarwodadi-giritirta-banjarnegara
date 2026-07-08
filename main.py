@@ -8,10 +8,9 @@ from streamlit_option_menu import option_menu
 # Konfigurasi Halaman (Minimalist & Clean)
 st.set_page_config(page_title="Dashboard Pendataan Ternak", layout="wide")
 
-# Fungsi Load & Parse Data Bentuk Baru
+# Fungsi Load, Clean & Parse Data
 @st.cache_data
 def load_data():
-    # Membaca data dengan mengabaikan 3 baris pertama (header bertingkat)
     try:
         df = pd.read_csv('Data Ternak Sarwodadi, Giritirta.xlsx - Sheet1.csv', header=None, skiprows=3)
     except:
@@ -21,7 +20,6 @@ def load_data():
             st.error("File data tidak ditemukan.")
             return pd.DataFrame()
     
-    # Menamai ulang 17 kolom sesuai dengan urutan di tabel barumu
     df.columns = [
         'No', 'Nama Pemilik', 'RT', 'RW', 
         'Kambing_Jantan', 'Kambing_Betina', 'Kambing_Total', 'Kambing_Anakan',
@@ -30,9 +28,19 @@ def load_data():
         'Ketersediaan'
     ]
     
+    # Fungsi khusus untuk merapikan format RT/RW agar terhindar dari "0-" atau "0nan"
+    def format_wilayah(val, prefix):
+        if pd.isna(val):
+            return "-"
+        s = str(val).replace('.0', '').strip().lower()
+        if s in ['nan', '-', '', 'none']:
+            return "-"
+        if len(s) == 1 and s.isdigit():
+            return f"{prefix} 0{s}"
+        return f"{prefix} {s.upper()}"
+    
     records = []
     for _, row in df.iterrows():
-        # Abaikan baris jika tidak ada nama pemilik
         if pd.isna(row['Nama Pemilik']):
             continue
             
@@ -42,22 +50,20 @@ def load_data():
             except:
                 return 0.0
                 
-        # Mengekstrak data untuk setiap jenis hewan (Kambing, Domba, Sapi)
         for jenis in ['Kambing', 'Domba', 'Sapi']:
             jantan = parse_num(row[f'{jenis}_Jantan'])
             betina = parse_num(row[f'{jenis}_Betina'])
             anakan = parse_num(row[f'{jenis}_Anakan'])
             
-            # Jika warga memiliki jenis ternak ini, masukkan ke dalam rekapitulasi
             if jantan > 0 or betina > 0 or anakan > 0:
-                rt_str = str(row['RT']).replace('.0', '')
-                rw_str = str(row['RW']).replace('.0', '')
+                rt_rapi = format_wilayah(row['RT'], "RT")
+                rw_rapi = format_wilayah(row['RW'], "RW")
                 
                 records.append({
                     'No': row['No'],
                     'Nama Pemilik': str(row['Nama Pemilik']).strip().title(),
-                    'RT': f"RT 0{rt_str}" if len(rt_str) == 1 else f"RT {rt_str}",
-                    'RW': f"RW 0{rw_str}" if len(rw_str) == 1 else f"RW {rw_str}",
+                    'RT': rt_rapi,
+                    'RW': rw_rapi,
                     'Jenis Ternak': jenis,
                     'Jantan': int(jantan),
                     'Betina': int(betina),
@@ -105,11 +111,35 @@ if menu == "📖 Profil Desa":
     """)
 
     st.markdown("### 🗺️ Peta Wilayah")
-    desa_coords = [-7.2472, 109.8111] 
-    m = folium.Map(location=desa_coords, zoom_start=13)
+    
+    # Koordinat geografis presisi
+    sarwodadi_coords = [-7.24000, 109.77250]
+    giritirta_coords = [-7.23833, 109.78556]
+    
+    # Mencari titik tengah antara dua desa agar peta terlihat proporsional
+    center_coords = [
+        (sarwodadi_coords[0] + giritirta_coords[0]) / 2,
+        (sarwodadi_coords[1] + giritirta_coords[1]) / 2
+    ]
+    
+    m = folium.Map(location=center_coords, zoom_start=15)
+    
+    # Pin untuk Desa Sarwodadi
     folium.Marker(
-        location=desa_coords, popup="Desa Sarwodadi & Giritirta", tooltip="Lokasi", icon=folium.Icon(color="darkgreen", icon="leaf")
+        location=sarwodadi_coords, 
+        popup="Desa Sarwodadi", 
+        tooltip="Desa Sarwodadi", 
+        icon=folium.Icon(color="green", icon="leaf")
     ).add_to(m)
+    
+    # Pin untuk Desa Giritirta
+    folium.Marker(
+        location=giritirta_coords, 
+        popup="Desa Giritirta", 
+        tooltip="Desa Giritirta", 
+        icon=folium.Icon(color="darkgreen", icon="leaf")
+    ).add_to(m)
+    
     st_folium(m, width=700, height=400)
 
 # ================= HALAMAN 2: DASHBOARD =================
@@ -117,21 +147,19 @@ elif menu == "📊 Dashboard Data Pertanian":
     st.title("📊 Dashboard Pendataan Peternak Warga")
     st.write("---")
 
-    # === Sidebar Filter ===
     st.sidebar.header("🔎 Filter Data")
     if not data_peternak.empty:
         filter_mode = st.sidebar.radio("Filter berdasarkan:", ["RW", "RT"])
 
         if filter_mode == "RW":
-            pilihan_unik = sorted(data_peternak["RW"].unique())
+            pilihan_unik = sorted([x for x in data_peternak["RW"].unique() if x != "-"])
             selected_lokasi = st.sidebar.multiselect("Pilih RW", options=pilihan_unik, default=pilihan_unik)
             filtered_data = data_peternak[data_peternak["RW"].isin(selected_lokasi)]
         else:
-            pilihan_unik = sorted(data_peternak["RT"].unique())
+            pilihan_unik = sorted([x for x in data_peternak["RT"].unique() if x != "-"])
             selected_lokasi = st.sidebar.multiselect("Pilih RT", options=pilihan_unik, default=pilihan_unik)
             filtered_data = data_peternak[data_peternak["RT"].isin(selected_lokasi)]
 
-        # === Metrik Angka Utama ===
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric(label="Total Populasi Ternak", value=f"{int(filtered_data['Total Ekor'].sum())} Ekor")
@@ -145,13 +173,11 @@ elif menu == "📊 Dashboard Data Pertanian":
 
         st.write("---")
 
-        # === Dataframe Rapi ===
         st.subheader("📄 Data Peternak")
         tabel_tampil = filtered_data[['Nama Pemilik', 'RT', 'RW', 'Jenis Ternak', 'Jantan', 'Betina', 'Anakan', 'Total Ekor', 'Ketersediaan']]
         st.dataframe(tabel_tampil, use_container_width=True)
         st.write("---")
 
-        # === Bar chart per RT ===
         st.subheader("📊 Total Ternak per RT")
         total_per_rt = filtered_data.groupby(["RT", "Jenis Ternak"])["Total Ekor"].sum().reset_index()
         fig_rt = px.bar(
@@ -161,7 +187,6 @@ elif menu == "📊 Dashboard Data Pertanian":
         fig_rt.update_xaxes(type='category', title_text='Rukun Tetangga (RT)')
         st.plotly_chart(fig_rt, use_container_width=True)
 
-        # === Bar chart per RW ===
         st.subheader("🏘️ Total Ternak per RW")
         total_per_rw = filtered_data.groupby(["RW", "Jenis Ternak"])["Total Ekor"].sum().reset_index()
         fig_rw = px.bar(
@@ -171,7 +196,6 @@ elif menu == "📊 Dashboard Data Pertanian":
         fig_rw.update_xaxes(type='category', title_text='Rukun Warga (RW)')
         st.plotly_chart(fig_rw, use_container_width=True)
 
-        # === Pie chart total ===
         st.subheader("🥧 Distribusi Ternak Keseluruhan")
         total_all = filtered_data.groupby("Jenis Ternak")["Total Ekor"].sum().reset_index()
         fig_pie = px.pie(
