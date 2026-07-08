@@ -8,66 +8,65 @@ from streamlit_option_menu import option_menu
 # Konfigurasi Halaman (Minimalist & Clean)
 st.set_page_config(page_title="Dashboard Pendataan Ternak", layout="wide")
 
-# Fungsi Load, Clean & PIVOT Data
+# Fungsi Load & Parse Data Bentuk Baru
 @st.cache_data
 def load_data():
+    # Membaca data dengan mengabaikan 3 baris pertama (header bertingkat)
     try:
-        df = pd.read_excel('Data Ternak Sarwodadi, Giritirta.xlsx', sheet_name='SARWODADI', header=1)
+        df = pd.read_csv('Data Ternak Sarwodadi, Giritirta.xlsx - Sheet1.csv', header=None, skiprows=3)
     except:
-        df = pd.read_csv('Data Ternak Sarwodadi, Giritirta.xlsx - SARWODADI.csv', header=1)
+        try:
+            df = pd.read_excel('Data Ternak Sarwodadi, Giritirta.xlsx', header=None, skiprows=3)
+        except:
+            st.error("File data tidak ditemukan.")
+            return pd.DataFrame()
     
-    # 1. Ambil kolom mentah
-    df_s = df.iloc[:, 0:10].copy()
-    df_s.columns = ['No', 'Nama Pemilik', 'RT', 'RW', 'Jenis Ternak', 'Jenis kelamin', 'Jumlah Dewasa', 'Total', 'Ketersediaan', 'Anakan']
+    # Menamai ulang 17 kolom sesuai dengan urutan di tabel barumu
+    df.columns = [
+        'No', 'Nama Pemilik', 'RT', 'RW', 
+        'Kambing_Jantan', 'Kambing_Betina', 'Kambing_Total', 'Kambing_Anakan',
+        'Domba_Jantan', 'Domba_Betina', 'Domba_Total', 'Domba_Anakan',
+        'Sapi_Jantan', 'Sapi_Betina', 'Sapi_Total', 'Sapi_Anakan',
+        'Ketersediaan'
+    ]
     
-    # 2. Forward fill identitas
-    kolom_identitas = ['No', 'Nama Pemilik', 'RT', 'RW', 'Jenis Ternak']
-    df_s[kolom_identitas] = df_s[kolom_identitas].ffill()
-    
-    # 3. Merapikan string RT dan RW
-    df_s['RT_str'] = "RT 0" + df_s['RT'].astype(str).str.replace('.0', '', regex=False)
-    df_s['RW_str'] = "RW 0" + df_s['RW'].astype(str).str.replace('.0', '', regex=False)
-    
-    # 4. Memastikan angka benar-benar angka (kosong = 0)
-    df_s['Jumlah Dewasa'] = pd.to_numeric(df_s['Jumlah Dewasa'], errors='coerce').fillna(0)
-    df_s['Anakan'] = pd.to_numeric(df_s['Anakan'], errors='coerce').fillna(0)
-    
-    # 5. Menangani Ketersediaan (Forward fill khusus untuk orang yang sama, lalu sisa kosong diisi Belum Konfirmasi)
-    df_s['Ketersediaan'] = df_s.groupby('Nama Pemilik')['Ketersediaan'].ffill().fillna('Belum Konfirmasi')
-    
-    # Membuang baris yang tidak ada isinya
-    df_s = df_s[df_s['Jenis kelamin'].notna() | (df_s['Jumlah Dewasa'] > 0) | (df_s['Anakan'] > 0)]
-    
-    # 6. PIVOT TABLE: Menggeser Jantan & Betina menjadi kolom (ke samping)
-    pivot_df = df_s.pivot_table(
-        index=['No', 'Nama Pemilik', 'RT_str', 'RW_str', 'Jenis Ternak'],
-        columns='Jenis kelamin',
-        values='Jumlah Dewasa',
-        aggfunc='sum'
-    ).reset_index()
-    
-    # 7. AGREGASI: Menjumlahkan Anakan dan mengambil Ketersediaan
-    agg_df = df_s.groupby(['No', 'Nama Pemilik', 'RT_str', 'RW_str', 'Jenis Ternak']).agg({
-        'Anakan': 'sum',
-        'Ketersediaan': 'first' # Mengambil status persetujuan peternak
-    }).reset_index()
-    
-    # 8. GABUNGKAN DATA
-    final_df = pd.merge(pivot_df, agg_df, on=['No', 'Nama Pemilik', 'RT_str', 'RW_str', 'Jenis Ternak'])
-    
-    # Memastikan kolom Jantan & Betina selalu ada meskipun datanya kosong
-    if 'Jantan' not in final_df.columns: final_df['Jantan'] = 0
-    if 'Betina' not in final_df.columns: final_df['Betina'] = 0
-    
-    final_df = final_df.fillna(0) # Mengubah NaN di kolom jantan/betina menjadi 0
-    final_df.rename(columns={'RT_str': 'RT', 'RW_str': 'RW'}, inplace=True)
-    
-    # 9. Menghitung Total Ekor per individu
-    final_df['Total Ekor'] = final_df['Jantan'] + final_df['Betina'] + final_df['Anakan']
-    
-    # Urutkan berdasarkan Nomor asli agar rapi
-    final_df = final_df.sort_values('No').reset_index(drop=True)
-    
+    records = []
+    for _, row in df.iterrows():
+        # Abaikan baris jika tidak ada nama pemilik
+        if pd.isna(row['Nama Pemilik']):
+            continue
+            
+        def parse_num(val):
+            try:
+                return float(val) if pd.notna(val) else 0.0
+            except:
+                return 0.0
+                
+        # Mengekstrak data untuk setiap jenis hewan (Kambing, Domba, Sapi)
+        for jenis in ['Kambing', 'Domba', 'Sapi']:
+            jantan = parse_num(row[f'{jenis}_Jantan'])
+            betina = parse_num(row[f'{jenis}_Betina'])
+            anakan = parse_num(row[f'{jenis}_Anakan'])
+            
+            # Jika warga memiliki jenis ternak ini, masukkan ke dalam rekapitulasi
+            if jantan > 0 or betina > 0 or anakan > 0:
+                rt_str = str(row['RT']).replace('.0', '')
+                rw_str = str(row['RW']).replace('.0', '')
+                
+                records.append({
+                    'No': row['No'],
+                    'Nama Pemilik': str(row['Nama Pemilik']).strip().title(),
+                    'RT': f"RT 0{rt_str}" if len(rt_str) == 1 else f"RT {rt_str}",
+                    'RW': f"RW 0{rw_str}" if len(rw_str) == 1 else f"RW {rw_str}",
+                    'Jenis Ternak': jenis,
+                    'Jantan': int(jantan),
+                    'Betina': int(betina),
+                    'Anakan': int(anakan),
+                    'Total Ekor': int(jantan + betina + anakan),
+                    'Ketersediaan': str(row['Ketersediaan']).strip() if pd.notna(row['Ketersediaan']) else 'Belum Konfirmasi'
+                })
+                
+    final_df = pd.DataFrame(records)
     return final_df
 
 data_peternak = load_data()
@@ -120,69 +119,65 @@ elif menu == "📊 Dashboard Data Pertanian":
 
     # === Sidebar Filter ===
     st.sidebar.header("🔎 Filter Data")
-    filter_mode = st.sidebar.radio("Filter berdasarkan:", ["RW", "RT"])
+    if not data_peternak.empty:
+        filter_mode = st.sidebar.radio("Filter berdasarkan:", ["RW", "RT"])
 
-    if filter_mode == "RW":
-        pilihan_unik = sorted(data_peternak["RW"].unique())
-        selected_lokasi = st.sidebar.multiselect("Pilih RW", options=pilihan_unik, default=pilihan_unik)
-        filtered_data = data_peternak[data_peternak["RW"].isin(selected_lokasi)]
-    else:
-        pilihan_unik = sorted(data_peternak["RT"].unique())
-        selected_lokasi = st.sidebar.multiselect("Pilih RT", options=pilihan_unik, default=pilihan_unik)
-        filtered_data = data_peternak[data_peternak["RT"].isin(selected_lokasi)]
-
-    # === Metrik Angka Utama ===
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric(label="Total Populasi Ternak", value=f"{int(filtered_data['Total Ekor'].sum())} Ekor")
-    with col2:
-        st.metric(label="Total Peternak", value=f"{filtered_data['Nama Pemilik'].nunique()} Orang")
-    with col3:
-        if not filtered_data.empty:
-            st.metric(label="Jenis Ternak Terbanyak", value=filtered_data.groupby('Jenis Ternak')['Total Ekor'].sum().idxmax())
+        if filter_mode == "RW":
+            pilihan_unik = sorted(data_peternak["RW"].unique())
+            selected_lokasi = st.sidebar.multiselect("Pilih RW", options=pilihan_unik, default=pilihan_unik)
+            filtered_data = data_peternak[data_peternak["RW"].isin(selected_lokasi)]
         else:
-            st.metric(label="Jenis Ternak Terbanyak", value="-")
+            pilihan_unik = sorted(data_peternak["RT"].unique())
+            selected_lokasi = st.sidebar.multiselect("Pilih RT", options=pilihan_unik, default=pilihan_unik)
+            filtered_data = data_peternak[data_peternak["RT"].isin(selected_lokasi)]
 
-    st.write("---")
+        # === Metrik Angka Utama ===
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(label="Total Populasi Ternak", value=f"{int(filtered_data['Total Ekor'].sum())} Ekor")
+        with col2:
+            st.metric(label="Total Peternak", value=f"{filtered_data['Nama Pemilik'].nunique()} Orang")
+        with col3:
+            if not filtered_data.empty:
+                st.metric(label="Jenis Ternak Terbanyak", value=filtered_data.groupby('Jenis Ternak')['Total Ekor'].sum().idxmax())
+            else:
+                st.metric(label="Jenis Ternak Terbanyak", value="-")
 
-    # === Dataframe Rapi (Seperti Foto) ===
-    st.subheader("📄 Data Peternak")
-    # Memilih kolom yang akan ditampilkan agar rapi memanjang ke samping
-    tabel_tampil = filtered_data[['Nama Pemilik', 'RT', 'RW', 'Jenis Ternak', 'Jantan', 'Betina', 'Anakan', 'Total Ekor', 'Ketersediaan']]
-    
-    # Menghilangkan angka desimal di tabel
-    tabel_tampil = tabel_tampil.copy()
-    for col in ['Jantan', 'Betina', 'Anakan', 'Total Ekor']:
-        tabel_tampil[col] = tabel_tampil[col].astype(int)
-        
-    st.dataframe(tabel_tampil, use_container_width=True)
-    st.write("---")
+        st.write("---")
 
-    # === Bar chart per RT ===
-    st.subheader("📊 Total Ternak per RT")
-    total_per_rt = filtered_data.groupby(["RT", "Jenis Ternak"])["Total Ekor"].sum().reset_index()
-    fig_rt = px.bar(
-        total_per_rt, x="RT", y="Total Ekor", color="Jenis Ternak",
-        barmode="group", color_discrete_sequence=earth_tones, text_auto=True
-    )
-    fig_rt.update_xaxes(type='category', title_text='Rukun Tetangga (RT)')
-    st.plotly_chart(fig_rt, use_container_width=True)
+        # === Dataframe Rapi ===
+        st.subheader("📄 Data Peternak")
+        tabel_tampil = filtered_data[['Nama Pemilik', 'RT', 'RW', 'Jenis Ternak', 'Jantan', 'Betina', 'Anakan', 'Total Ekor', 'Ketersediaan']]
+        st.dataframe(tabel_tampil, use_container_width=True)
+        st.write("---")
 
-    # === Bar chart per RW ===
-    st.subheader("🏘️ Total Ternak per RW")
-    total_per_rw = filtered_data.groupby(["RW", "Jenis Ternak"])["Total Ekor"].sum().reset_index()
-    fig_rw = px.bar(
-        total_per_rw, x="RW", y="Total Ekor", color="Jenis Ternak",
-        barmode="group", color_discrete_sequence=earth_tones, text_auto=True
-    )
-    fig_rw.update_xaxes(type='category', title_text='Rukun Warga (RW)')
-    st.plotly_chart(fig_rw, use_container_width=True)
+        # === Bar chart per RT ===
+        st.subheader("📊 Total Ternak per RT")
+        total_per_rt = filtered_data.groupby(["RT", "Jenis Ternak"])["Total Ekor"].sum().reset_index()
+        fig_rt = px.bar(
+            total_per_rt, x="RT", y="Total Ekor", color="Jenis Ternak",
+            barmode="group", color_discrete_sequence=earth_tones, text_auto=True
+        )
+        fig_rt.update_xaxes(type='category', title_text='Rukun Tetangga (RT)')
+        st.plotly_chart(fig_rt, use_container_width=True)
 
-    # === Pie chart total ===
-    st.subheader("🥧 Distribusi Ternak Keseluruhan")
-    total_all = filtered_data.groupby("Jenis Ternak")["Total Ekor"].sum().reset_index()
-    fig_pie = px.pie(
-        total_all, names="Jenis Ternak", values="Total Ekor",
-        color_discrete_sequence=earth_tones
-    )
-    st.plotly_chart(fig_pie, use_container_width=True)
+        # === Bar chart per RW ===
+        st.subheader("🏘️ Total Ternak per RW")
+        total_per_rw = filtered_data.groupby(["RW", "Jenis Ternak"])["Total Ekor"].sum().reset_index()
+        fig_rw = px.bar(
+            total_per_rw, x="RW", y="Total Ekor", color="Jenis Ternak",
+            barmode="group", color_discrete_sequence=earth_tones, text_auto=True
+        )
+        fig_rw.update_xaxes(type='category', title_text='Rukun Warga (RW)')
+        st.plotly_chart(fig_rw, use_container_width=True)
+
+        # === Pie chart total ===
+        st.subheader("🥧 Distribusi Ternak Keseluruhan")
+        total_all = filtered_data.groupby("Jenis Ternak")["Total Ekor"].sum().reset_index()
+        fig_pie = px.pie(
+            total_all, names="Jenis Ternak", values="Total Ekor",
+            color_discrete_sequence=earth_tones
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+    else:
+        st.warning("Data belum tersedia atau gagal dimuat.")
