@@ -12,12 +12,14 @@ st.set_page_config(page_title="Dashboard Pendataan Ternak", layout="wide")
 @st.cache_data
 def load_data():
     try:
-        df = pd.read_csv('Data Ternak Sarwodadi, Giritirta.xlsx - Sheet1.csv', header=None, skiprows=3)
+        # Mencoba membaca file data ke-6 jika kamu langsung menguploadnya dengan nama ini
+        df = pd.read_excel('Data Ternak Sarwodadi, Giritirta_6.xlsx', header=None, skiprows=3)
     except:
         try:
+            # Otomatis kembali ke nama file umum jika kamu me-rename filenya
             df = pd.read_excel('Data Ternak Sarwodadi, Giritirta.xlsx', header=None, skiprows=3)
         except:
-            st.error("File data tidak ditemukan.")
+            st.error("File data Excel tidak ditemukan. Pastikan nama file di GitHub sudah benar.")
             return pd.DataFrame()
     
     df.columns = [
@@ -28,15 +30,20 @@ def load_data():
         'Ketersediaan'
     ]
     
-    # Fungsi khusus untuk merapikan format RT/RW agar terhindar dari "0-" atau "0nan"
+    # Fungsi khusus yang SUDAH DIPERBAIKI untuk menangani "0-" atau "-"
     def format_wilayah(val, prefix):
         if pd.isna(val):
             return "-"
-        s = str(val).replace('.0', '').strip().lower()
-        if s in ['nan', '-', '', 'none']:
+        
+        s = str(val).replace('.0', '').strip()
+        # Jika isinya kosong, strip, nan, atau '0-', langsung kembalikan strip (tanpa 0)
+        if s.lower() in ['nan', '-', '', 'none', '0-']:
             return "-"
-        if len(s) == 1 and s.isdigit():
+            
+        # Jika isinya murni angka tunggal (misal '1'), tambahkan 0 di depan ('01')
+        if s.isdigit() and len(s) == 1:
             return f"{prefix} 0{s}"
+            
         return f"{prefix} {s.upper()}"
     
     records = []
@@ -112,11 +119,11 @@ if menu == "📖 Profil Desa":
 
     st.markdown("### 🗺️ Peta Wilayah")
     
-    # Koordinat geografis presisi
-    sarwodadi_coords = [-7.24000, 109.77250]
-    giritirta_coords = [-7.23833, 109.78556]
+    # Koordinat geografis yang sudah digeser manual (disesuaikan dengan posisi teks di OpenStreetMap)
+    sarwodadi_coords = [-7.24650, 109.77380]
+    giritirta_coords = [-7.24480, 109.78200]
     
-    # Mencari titik tengah antara dua desa agar peta terlihat proporsional
+    # Mencari titik tengah antara dua desa untuk meletakkan kamera peta
     center_coords = [
         (sarwodadi_coords[0] + giritirta_coords[0]) / 2,
         (sarwodadi_coords[1] + giritirta_coords[1]) / 2
@@ -124,7 +131,7 @@ if menu == "📖 Profil Desa":
     
     m = folium.Map(location=center_coords, zoom_start=15)
     
-    # Pin untuk Desa Sarwodadi
+    # 2 Pin Penanda Masing-Masing Desa
     folium.Marker(
         location=sarwodadi_coords, 
         popup="Desa Sarwodadi", 
@@ -132,7 +139,6 @@ if menu == "📖 Profil Desa":
         icon=folium.Icon(color="green", icon="leaf")
     ).add_to(m)
     
-    # Pin untuk Desa Giritirta
     folium.Marker(
         location=giritirta_coords, 
         popup="Desa Giritirta", 
